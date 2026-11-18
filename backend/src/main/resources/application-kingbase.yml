@@ -1,0 +1,13 @@
+# 所有连接参数必须显式提供，不猜测本机数据库名及凭据。
+spring:
+  datasource:
+    driver-class-name: com.kingbase8.Driver
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 10000
+      validation-timeout: 3000
+      initialization-fail-timeout: 10000

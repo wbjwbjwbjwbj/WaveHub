@@ -1,0 +1,15 @@
+node_modules/
+dist/
+target/
+.tools/
+.cache/
+.idea/
+*.log
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+.DS_Store
+Thumbs.db
+

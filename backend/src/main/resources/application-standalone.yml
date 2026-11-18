@@ -1,0 +1,5 @@
+# 默认独立启动，供前后端联调；不连接数据库，也不提供数据库业务功能。
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
