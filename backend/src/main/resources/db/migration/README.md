@@ -1,7 +1,10 @@
 # 数据库脚本
 
-此目录保留给后续版本化 SQL。当前不创建业务表、不自动执行 SQL，也未启用 Flyway。
+本目录包含手动执行的版本化建表脚本。项目不会自动执行 SQL，尚未启用 Flyway。
 
-接入前确认本机 KingbaseES 版本、兼容模式、schema、字符集及 JDBC 驱动匹配情况。
-脚本按 `V001__description.sql` 命名，在专用开发库验证后手动执行并记录版本。
+当前结构：`V001__create_core_tables.sql`，包含 11 张核心业务表、主外键、约束、索引和注释。
+
+可选示例数据在相邻目录 `../seed/prototype_seed.sql`，不属于生产迁移。
+执行顺序、字段约定和后续修改方法见 [`../README.md`](../README.md)。
+
 迁移工具的支持范围及授权经过确认后再接入，不将 PostgreSQL 协议兼容视为 Flyway 已适配。
