@@ -1,0 +1,919 @@
+openapi: 3.1.0
+info:
+  title: 双平台研发接口草案
+  version: 0.2.4
+  description: |-
+    覆盖数据管理平台与离线数据处理客户端的前后端接口草案，供接口评审使用。
+    数据管理平台的波形文件限定为 miniSEED（MiniSEED 2/3 的具体支持范围待后端确认）。
+    时间戳采用 RFC 3339 UTC（Z 后缀）。所有波形时间窗口为 [startTime, endTime)，两端均提供时 startTime 必须早于 endTime，否则返回 422。列表和导出允许省略任一边界，视为该侧无限制；视口必须提供两端。列表按与记录时间区间相交筛选。
+    联调草案未指定认证方案；部署前分别确认平台和离线客户端的认证与授权。启用认证后，凭据缺失或无效返回 401，权限不足返回 403，使用统一 Error 响应。
+    待确认项：单文件大小、批量总大小及文件数、ZIP 解压后大小及条目数、miniSEED 版本和编码支持范围、模型参数来源及任务运行状态来源。
+servers:
+  - url: /api/v1
+    description: 接口基础路径（部署环境按需替换）
+tags:
+  - name: 数据管理平台 - 波形数据
+  - name: 数据管理平台 - 波形展示
+  - name: 离线客户端 - 设备管理
+  - name: 离线客户端 - 模型管理
+  - name: 离线客户端 - 任务管理
+paths:
+  /platform/waveforms:
+    get:
+      tags: [数据管理平台 - 波形数据]
+      operationId: listWaveformRecords
+      summary: 分页查询已导入的 miniSEED 波形记录
+      description: 每项是单通道、连续且采样率固定的一段数据。同一文件中的多个记录通过 fileId 关联；遇到缺口、重叠或采样率变化时分段。
+      parameters:
+        - $ref: '#/components/parameters/Keyword'
+        - name: fileId
+          in: query
+          schema: { type: string }
+        - name: networkCode
+          in: query
+          schema: { type: string }
+        - name: stationCode
+          in: query
+          schema: { type: string }
+        - name: channelCode
+          in: query
+          description: 例如 BHZ、BHN、BHE。
+          schema: { type: string }
+        - name: startTime
+          in: query
+          description: 查询起始时间，RFC 3339。
+          schema: { type: string, format: date-time }
+        - name: endTime
+          in: query
+          description: 查询结束时间，RFC 3339。
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageResult'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/WaveformRecord' }
+        '422': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveforms/batch-delete:
+    post:
+      tags: [数据管理平台 - 波形数据]
+      operationId: batchDeleteWaveformRecords
+      summary: 批量删除波形记录
+      description: 只删除记录及索引，保留原始文件。不存在的 ID 忽略，响应只列出本次实际删除的记录 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recordIds]
+              properties:
+                recordIds: { type: array, minItems: 1, uniqueItems: true, items: { type: string, minLength: 1 } }
+      responses:
+        '200':
+          description: 删除结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deletedRecordIds]
+                properties:
+                  deletedRecordIds: { type: array, items: { type: string } }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/import:
+    post:
+      tags: [数据管理平台 - 波形数据]
+      operationId: importWaveformFiles
+      summary: 导入 miniSEED 文件
+      description: multipart 中每个文件使用同名字段 files；前端对每个文件调用 FormData.append('files', file)，不要手动设置 Content-Type。后端按重复字段绑定文件数组，框架选定后须验证单文件和多文件均可绑定。按文件内容校验格式；成功后保存原始字节并建立记录索引。超出部署配置的大小或文件数限制时返回 413。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  items: { type: string, format: binary, description: miniSEED 文件（.mseed、.miniseed 或无扩展名） }
+                description: { type: string, maxLength: 500 }
+      responses:
+        '202':
+          description: 已接受导入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportJob' }
+        '413': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/imports/{importId}:
+    get:
+      tags: [数据管理平台 - 波形数据]
+      operationId: getWaveformImportJob
+      summary: 查询导入任务进度
+      description: 上传返回 202 后使用 importId 轮询。queued 和 processing 继续轮询；succeeded、partially_succeeded 和 failed 停止轮询。部分成功时展示逐文件结果并刷新列表。
+      parameters:
+        - name: importId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 导入任务状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/{fileId}:
+    get:
+      tags: [数据管理平台 - 波形展示]
+      operationId: getWaveformFile
+      summary: 获取 miniSEED 文件元信息
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 文件级元信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaveformFile' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/{fileId}/download:
+    get:
+      tags: [数据管理平台 - 波形数据]
+      operationId: downloadWaveformFile
+      summary: 下载原始 miniSEED 文件
+      description: 同步流式下载，内容与上传文件逐字节相同。
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 原始文件
+          headers:
+            Content-Disposition: { $ref: '#/components/headers/DownloadFilename' }
+          content:
+            application/vnd.fdsn.mseed:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-records/export:
+    post:
+      tags: [数据管理平台 - 波形数据]
+      operationId: exportWaveformRecords
+      summary: 导出 miniSEED 数据
+      description: 同步导出，按所选记录及可选 UTC 时间范围重新编码为 miniSEED；时间窗含起点、不含终点。两端同时省略时导出所选记录的完整时段。导出上限待部署确认，超限返回 422；异步导出后续评估。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recordIds]
+              properties:
+                recordIds: { type: array, minItems: 1, items: { type: string, minLength: 1 } }
+                startTime: { type: string, format: date-time }
+                endTime: { type: string, format: date-time }
+      responses:
+        '200':
+          description: 导出文件
+          headers:
+            Content-Disposition: { $ref: '#/components/headers/DownloadFilename' }
+          content:
+            application/vnd.fdsn.mseed:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-records/{recordId}:
+    get:
+      tags: [数据管理平台 - 波形展示]
+      operationId: getWaveformRecord
+      summary: 获取波形元信息
+      parameters:
+        - $ref: '#/components/parameters/RecordId'
+      responses:
+        '200':
+          description: 波形元信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaveformRecord' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/{fileId}/channels:
+    get:
+      tags: [数据管理平台 - 波形展示]
+      operationId: listWaveformFileChannels
+      summary: 列出文件内的单通道波形记录
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 通道列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/WaveformRecord' } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /platform/waveform-files/{fileId}/data:
+    get:
+      tags: [数据管理平台 - 波形展示]
+      operationId: getWaveformViewport
+      summary: 获取指定时间视口的波形采样数据
+      description: |-
+        请求使用 UTC，时间窗口含起点、不含终点，且起点必须早于终点。省略没有采样的记录；所有记录均无采样时返回 channels: []。
+        每项对应一个连续记录。第 i 个点的时间为 recordStartTime 加 (sampleIndexStart + i * sampleStride) / sourceSampleRateHz 秒。
+        sampleStride = 1 表示原采样；大于 1 表示等间隔抽取，仅用于绘图，可能漏掉峰值。
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: recordIds
+          in: query
+          required: false
+          description: 逗号分隔的记录 ID，例如 recordIds=rec_01,rec_02。省略时查询文件内全部记录；传入空列表、空字符串（如 recordIds=）或不属于该文件的 ID 时返回 422。
+          style: form
+          explode: false
+          schema: { type: array, minItems: 1, uniqueItems: true, items: { type: string, minLength: 1 } }
+        - name: startTime
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: endTime
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: maxPoints
+          in: query
+          description: 每条记录的最大返回点数。
+          schema: { type: integer, minimum: 100, maximum: 200000, default: 5000 }
+      responses:
+        '200':
+          description: 视口数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaveformViewport' }
+              example:
+                fileId: file_01
+                startTime: '2026-11-16T08:00:01Z'
+                endTime: '2026-11-16T08:00:01.03Z'
+                channels:
+                  - recordId: rec_01
+                    recordStartTime: '2026-11-16T08:00:00Z'
+                    sourceSampleRateHz: 100
+                    sampleIndexStart: 100
+                    sampleStride: 1
+                    values: [12, 15, 11]
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/devices:
+    get:
+      tags: [离线客户端 - 设备管理]
+      operationId: listDevices
+      summary: 分页查询设备
+      parameters:
+        - $ref: '#/components/parameters/Keyword'
+        - name: type
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageResult'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Device' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [离线客户端 - 设备管理]
+      operationId: createDevice
+      summary: 新增设备
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceInput' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/devices/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [离线客户端 - 设备管理]
+      operationId: getDevice
+      summary: 获取设备详情
+      responses:
+        '200':
+          description: 设备详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [离线客户端 - 设备管理]
+      operationId: updateDevice
+      summary: 编辑设备
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceInput' }
+      responses:
+        '200':
+          description: 更新后的设备
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Device' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [离线客户端 - 设备管理]
+      operationId: deleteDevice
+      summary: 删除设备
+      responses:
+        '204': { description: 已删除 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/models:
+    get:
+      tags: [离线客户端 - 模型管理]
+      operationId: listModels
+      summary: 分页查询模型
+      parameters:
+        - $ref: '#/components/parameters/Keyword'
+        - name: type
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 模型列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageResult'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Model' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [离线客户端 - 模型管理]
+      operationId: importModel
+      summary: 导入模型 ZIP 包
+      description: 接收 ZIP 包并解压到配置的目录。拒绝逃出目标目录的条目及符号链接；限制上传大小、累计解压大小及条目数，超限返回 413。包目录结构及限制值待确认。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, name, type]
+              properties:
+                file: { type: string, format: binary }
+                name: { type: string, maxLength: 200 }
+                description: { type: string, maxLength: 1000 }
+                type: { type: string }
+      responses:
+        '201':
+          description: 模型已导入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Model' }
+        '413': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/models/{modelId}:
+    parameters:
+      - name: modelId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [离线客户端 - 模型管理]
+      operationId: getModel
+      summary: 获取模型详情
+      responses:
+        '200':
+          description: 模型详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Model' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [离线客户端 - 模型管理]
+      operationId: updateModel
+      summary: 编辑模型信息
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name: { type: string, maxLength: 200 }
+                description: { type: string, maxLength: 1000 }
+                type: { type: string }
+      responses:
+        '200':
+          description: 更新后的模型
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Model' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [离线客户端 - 模型管理]
+      operationId: deleteModel
+      summary: 删除模型
+      responses:
+        '204': { description: 已删除 }
+        '409': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/models/{modelId}/export:
+    get:
+      tags: [离线客户端 - 模型管理]
+      operationId: exportModel
+      summary: 导出模型 ZIP 包
+      parameters:
+        - name: modelId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 模型 ZIP 文件
+          headers:
+            Content-Disposition: { $ref: '#/components/headers/DownloadFilename' }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/tasks:
+    get:
+      tags: [离线客户端 - 任务管理]
+      operationId: listTasks
+      summary: 分页查询任务
+      parameters:
+        - $ref: '#/components/parameters/Keyword'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TaskStatus' }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: 任务列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageResult'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/TaskSummary' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [离线客户端 - 任务管理]
+      operationId: createTask
+      summary: 创建任务
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskInput' }
+      responses:
+        '201':
+          description: 已创建任务
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/tasks/{taskId}:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [离线客户端 - 任务管理]
+      operationId: getTask
+      summary: 获取任务详情
+      responses:
+        '200':
+          description: 任务详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [离线客户端 - 任务管理]
+      operationId: updateTask
+      summary: 编辑任务
+      description: 运行中的任务不可编辑，返回 409。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskInput' }
+      responses:
+        '200':
+          description: 更新后的任务
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [离线客户端 - 任务管理]
+      operationId: deleteTask
+      summary: 删除任务
+      responses:
+        '204': { description: 已删除 }
+        '409': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/tasks/{taskId}/start:
+    post:
+      tags: [离线客户端 - 任务管理]
+      operationId: startTask
+      summary: 启动任务
+      description: 仅 created 或 stopped 可启动，成功后进入 running。其他状态返回 409。
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 启动后的任务状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/tasks/{taskId}/stop:
+    post:
+      tags: [离线客户端 - 任务管理]
+      operationId: stopTask
+      summary: 停止任务
+      description: 仅 running 可停止，成功后进入 stopped。其他状态返回 409。
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 停止后的任务状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+  /client/tasks/{taskId}/parameters:
+    get:
+      tags: [离线客户端 - 任务管理]
+      operationId: getTaskParameters
+      summary: 获取任务模型配置参数
+      description: 当前前端可使用模拟配置表单；参数的真实 schema 由模型元数据约定。
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 参数定义和当前值
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [parameters]
+                properties:
+                  parameters:
+                    type: array
+                    items: { $ref: '#/components/schemas/ModelParameter' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [离线客户端 - 任务管理]
+      operationId: updateTaskParameters
+      summary: 更新任务模型配置参数
+      description: 全量替换参数。缺少必填值、出现未知键、值类型不符、数值越界或选项无效时返回 422；运行中返回 409。
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: 参数已保存
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  values: { type: object, additionalProperties: true }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  headers:
+    DownloadFilename:
+      description: |-
+        使用 attachment；filename 提供安全的 ASCII 文件名，filename* 按 RFC 8187 对 UTF-8 文件名做百分号编码。客户端优先读取 filename*。
+        文件名只包含基本文件名，不携带路径。
+        跨源部署时，服务端需通过 Access-Control-Expose-Headers 暴露 Content-Disposition，供浏览器读取文件名。
+      schema: { type: string }
+      example: "attachment; filename=\"waveform.mseed\"; filename*=UTF-8''%E6%B3%A2%E5%BD%A2.mseed"
+  parameters:
+    Keyword:
+      name: keyword
+      in: query
+      description: 去除首尾空白后，不区分大小写做子串匹配。波形列表匹配原文件名，设备、模型和任务列表匹配名称；省略或去除空白后为空时不筛选。
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+    RecordId:
+      name: recordId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    NotFound:
+      description: 路径或请求中引用的资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Error:
+      description: 请求失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    PageResult:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items: { type: array, items: { type: object } }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, examples: [VALIDATION_ERROR] }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+    WaveformFile:
+      type: object
+      required: [id, sourceFileName, format, miniSeedVersion, recordCount, createdAt]
+      properties:
+        id: { type: string }
+        sourceFileName: { type: string }
+        format: { type: string, const: miniSEED }
+        miniSeedVersion: { type: string, enum: ['2', '3', 'unknown'] }
+        recordCount: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+    WaveformRecord:
+      type: object
+      description: startTime 为首点时间，endTime 为记录的排他终点，即 startTime 加 sampleCount / sampleRateHz 秒。时间以 UTC 表示。
+      required: [id, fileId, sourceFileName, networkCode, stationCode, locationCode, channelCode, startTime, endTime, sampleRateHz, sampleCount]
+      properties:
+        id: { type: string }
+        fileId: { type: string }
+        sourceFileName: { type: string, description: 原始上传文件名 }
+        networkCode: { type: string, description: FDSN 网络代码；缺失时为空字符串 }
+        stationCode: { type: string }
+        locationCode: { type: string, description: MiniSEED location code；缺失时为空字符串 }
+        channelCode: { type: string, description: 例如 BHZ、BHN、BHE }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        sampleRateHz: { type: number, exclusiveMinimum: 0 }
+        sampleCount: { type: integer, minimum: 1 }
+        encoding: { type: string, description: 解码得到的 MiniSEED 编码名称或代码 }
+        dataQuality:
+          type: string
+          enum: [D, R, Q, M, unknown]
+          description: miniSEED 2 质量标识。D 为数据质量未指定，R 为原始实时数据，Q 为质量受控数据，M 为合并数据；无法取得标识时为 unknown。
+    WaveformViewport:
+      type: object
+      required: [fileId, startTime, endTime, channels]
+      properties:
+        fileId: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        channels:
+          type: array
+          items:
+            type: object
+            required: [recordId, recordStartTime, sourceSampleRateHz, sampleIndexStart, sampleStride, values]
+            properties:
+              recordId: { type: string }
+              recordStartTime: { type: string, format: date-time }
+              sourceSampleRateHz: { type: number, exclusiveMinimum: 0 }
+              sampleIndexStart: { type: integer, minimum: 0, description: 'values[0] 在原始记录中的零起始采样点序号' }
+              sampleStride: { type: integer, minimum: 1, default: 1, description: 相邻返回值在原始记录中的采样点间隔 }
+              values: { type: array, minItems: 1, items: { type: number }, description: 解码后的原始样本，未换算为物理单位 }
+    ImportJob:
+      type: object
+      required: [importId, status, totalFiles, completedFiles]
+      properties:
+        importId: { type: string }
+        status:
+          type: string
+          enum: [queued, processing, succeeded, partially_succeeded, failed]
+          description: queued 为等待处理，processing 为处理中，succeeded 为全部成功，partially_succeeded 为部分成功，failed 为全部失败。
+        totalFiles: { type: integer }
+        completedFiles: { type: integer }
+        failedFiles: { type: integer, default: 0 }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              fileName: { type: string }
+              code: { type: string }
+              message: { type: string }
+        files:
+          type: array
+          description: 每个源文件的解析结果，允许批量导入部分成功。succeeded 项提供 fileId 和 recordIds；failed 项提供 errorCode 和 errorMessage。
+          items:
+            type: object
+            required: [fileName, status, recordCount]
+            oneOf:
+              - required: [fileId, recordIds]
+                properties:
+                  status: { enum: [succeeded] }
+              - required: [errorCode, errorMessage]
+                properties:
+                  status: { enum: [failed] }
+            properties:
+              fileName: { type: string }
+              fileId: { type: string }
+              status: { type: string, enum: [succeeded, failed] }
+              recordCount: { type: integer, minimum: 0 }
+              recordIds: { type: array, items: { type: string } }
+              errorCode: { type: string }
+              errorMessage: { type: string }
+    DeviceInput:
+      type: object
+      required: [name, model, type]
+      properties:
+        name: { type: string, maxLength: 200 }
+        model: { type: string, maxLength: 200 }
+        type: { type: string, maxLength: 100 }
+        ip:
+          type: [string, 'null']
+          format: ipv4
+          description: 可省略或传 null，均表示未配置 IP；编辑时表示清除现有 IP。提供字符串时必须为有效 IPv4 地址。
+        description: { type: string, maxLength: 1000 }
+    Device:
+      allOf:
+        - $ref: '#/components/schemas/DeviceInput'
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    Model:
+      type: object
+      required: [id, name, type, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        type: { type: string }
+        fileName: { type: string }
+        sizeBytes: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        parameters: { type: array, items: { $ref: '#/components/schemas/ModelParameter' } }
+    ModelParameter:
+      type: object
+      description: 数值参数的 min/max 为包含边界，min 不得大于 max。select 参数值必须来自 options。
+      required: [key, label, type]
+      if: { properties: { type: { const: select } } }
+      then: { required: [options] }
+      properties:
+        key: { type: string }
+        label: { type: string }
+        type: { type: string, enum: [string, number, integer, boolean, select] }
+        required: { type: boolean, default: false }
+        value: {}
+        defaultValue: {}
+        description: { type: string }
+        min: { type: number }
+        max: { type: number }
+        options: { type: array, minItems: 1, uniqueItems: true, items: { type: string } }
+    TaskInput:
+      type: object
+      required: [name, modelId, deviceIds]
+      properties:
+        name: { type: string, maxLength: 200 }
+        modelId: { type: string }
+        deviceIds: { type: array, minItems: 1, uniqueItems: true, items: { type: string } }
+        description: { type: string, maxLength: 1000 }
+        parameterValues: { type: object, additionalProperties: true }
+    TaskStatus:
+      type: string
+      description: created 为已创建尚未运行，running 为运行中，succeeded 为执行成功，failed 为执行失败，stopped 为已主动停止。created 和 stopped 状态可以启动任务。
+      enum: [created, running, succeeded, stopped, failed]
+    TaskSummary:
+      type: object
+      required: [id, name, modelId, deviceIds, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        modelId: { type: string }
+        modelName: { type: string }
+        deviceIds: { type: array, items: { type: string } }
+        deviceNames: { type: array, items: { type: string } }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Task:
+      allOf:
+        - $ref: '#/components/schemas/TaskInput'
+        - type: object
+          required: [id, status, createdAt, updatedAt]
+          properties:
+            id: { type: string }
+            status: { $ref: '#/components/schemas/TaskStatus' }
+            model: { $ref: '#/components/schemas/Model' }
+            devices: { type: array, items: { $ref: '#/components/schemas/Device' } }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            startedAt: { type: string, format: date-time }
+            stoppedAt: { type: string, format: date-time }
