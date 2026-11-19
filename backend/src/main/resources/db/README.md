@@ -13,6 +13,8 @@
 
 脚本不创建数据库或 schema，不包含 DROP / TRUNCATE / DELETE，不自动执行，不启用 Flyway。
 
+以上说明针对初始化脚本。若误建到 `test`，使用独立的维护入口 [`maintenance/README.md`](maintenance/README.md)，其中包含仅允许在 `test` 中运行的项目表清理脚本及迁往 `WaveHubDB` 的步骤。
+
 1. 在金仓管理工具中连接专用开发数据库，确认实际版本、兼容模式和目标 schema。连接用户需要相应建表权限。
 2. 通过 `SELECT version();`、`SELECT current_schema();` 核对所连接的实例和当前 schema；如目标模式不支持这些查询，使用管理工具查看。
 3. 以 UTF-8 打开并完整执行建表文件。脚本使用显式 `BEGIN` / `COMMIT`，执行工具应遇错停止；报错后先回滚并检查，不继续执行后续脚本。
@@ -21,9 +23,9 @@
 
 ## 结构与字段约定
 
-- 传感器、阵元、采集设备是同一个实体：`sensor`；一个 `station` 对应多个 `sensor`。
+- 传感器、传感器、采集设备是同一个实体：`sensor`；一个 `station` 对应多个 `sensor`。
 - 所有主键为应用分配的 BIGINT；后续实体可使用 MyBatis-Plus `ASSIGN_ID`，API 对外将 ID 转为字符串。直接手工插入时必须提供不冲突的 ID。
-- 样例 ID：台站 1001–1002，阵元 1101–1103 / 1201–1203，事件 2001，参数方案 3001–3003；应用不应假定这些 ID 永久存在。
+- 样例 ID：台站 1001–1002，传感器 1101–1103 / 1201–1203，事件 2001，参数方案 3001–3003；应用不应假定这些 ID 永久存在。
 - 位置暂按 WGS84 经纬度；高程以 m 为单位。事件 `depth_m` 暂约定相对参考地表向下为正，可为空，参考面需进一步讨论。
 - 测向角暂约定从真北顺时针、指向信号来源；接入算法时必须核对并转换，不能直接把另一种方向定义写入。
 - 时间使用 `TIMESTAMP(6) WITH TIME ZONE`，应用交换时使用带偏移或 UTC 的 ISO 8601 时间。精度暂为微秒；有更高精度需求时需再调整。
@@ -45,7 +47,7 @@
 
 `prototype_seed.sql` 导入以下虚构记录：
 
-- 2 个示例台站，每站 3 个阵元，共 6 个传感器；型号、序列号、标称采样率等未知参数留空。
+- 2 个示例台站，每站 3 个传感器，共 6 个传感器；型号、序列号、标称采样率等未知参数留空。
 - 1 个明确标记为 DEMO 的虚构事件。
 - 3 个参数草稿：滤波、时频、WinPMCC。参数内容为 `{}`，不把尚未确认的算法参数伪装成可用配置。
 
@@ -62,7 +64,7 @@ UNION ALL SELECT 'source_event', COUNT(*) FROM source_event
 UNION ALL SELECT 'analysis_preset', COUNT(*) FROM analysis_preset;
 ```
 
-预期计数依次为 2、6、1、3。也可按台站查询 `sensor`，确认两组阵元关系。
+预期计数依次为 2、6、1、3。也可按台站查询 `sensor`，确认两组传感器关系。
 
 ## 后续如何修改
 
@@ -73,7 +75,7 @@ UNION ALL SELECT 'analysis_preset', COUNT(*) FROM analysis_preset;
 
 ## 本次验证范围
 
-已使用 SQLGlot 的 PostgreSQL 方言离线解析两份脚本，并核对 11 张表、外键目标、示例数据列与必填字段、ID 唯一性、台站和阵元引用、JSON 内容及示例方案 DRAFT 状态。
+已使用 SQLGlot 的 PostgreSQL 方言离线解析两份脚本，并核对 11 张表、外键目标、示例数据列与必填字段、ID 唯一性、台站和传感器引用、JSON 内容及示例方案 DRAFT 状态。
 该检查只验证脚本语法和部分结构一致性，未连接本机 KingbaseES，未执行建表或导入，也不代表其具体版本和兼容模式已通过验证。
 
 参考：[金仓数据类型说明](https://bbs.kingbase.com.cn/kingbase-doc/v8/development/develop-transfer/kes-vs-mysql/kes-vs-mysql-1.html)、[金仓表管理说明](https://help.kingbase.com.cn/v8.6.7.24/admin/general/administrator-guide/13-managing-tables.html)。

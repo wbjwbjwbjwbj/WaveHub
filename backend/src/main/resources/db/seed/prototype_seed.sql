@@ -6,23 +6,23 @@ BEGIN;
 
 INSERT INTO station (id, code, name, longitude, latitude, elevation_m, description)
 VALUES (1001, 'DEMO_STA_A', '示例台站 A', 116.0000000, 40.0000000, 50.000,
-        '虚构原型数据，仅用于台站与阵元管理界面演示。');
+        '虚构原型数据，仅用于台站与传感器管理界面演示。');
 INSERT INTO station (id, code, name, longitude, latitude, elevation_m, description)
 VALUES (1002, 'DEMO_STA_B', '示例台站 B', 116.1000000, 40.1000000, 60.000,
         '虚构原型数据，仅用于跨站组合选择界面演示。');
 
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1101, 1001, 'A01', '台站 A 阵元 1', 116.0000000, 40.0000000, 50.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1101, 1001, 'A01', '台站 A 传感器 1', 116.0000000, 40.0000000, 50.000, '虚构坐标，采集参数待实机确认。');
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1102, 1001, 'A02', '台站 A 阵元 2', 116.0005000, 40.0000000, 50.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1102, 1001, 'A02', '台站 A 传感器 2', 116.0005000, 40.0000000, 50.000, '虚构坐标，采集参数待实机确认。');
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1103, 1001, 'A03', '台站 A 阵元 3', 116.0000000, 40.0005000, 50.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1103, 1001, 'A03', '台站 A 传感器 3', 116.0000000, 40.0005000, 50.000, '虚构坐标，采集参数待实机确认。');
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1201, 1002, 'B01', '台站 B 阵元 1', 116.1000000, 40.1000000, 60.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1201, 1002, 'B01', '台站 B 传感器 1', 116.1000000, 40.1000000, 60.000, '虚构坐标，采集参数待实机确认。');
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1202, 1002, 'B02', '台站 B 阵元 2', 116.1005000, 40.1000000, 60.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1202, 1002, 'B02', '台站 B 传感器 2', 116.1005000, 40.1000000, 60.000, '虚构坐标，采集参数待实机确认。');
 INSERT INTO sensor (id, station_id, code, name, longitude, latitude, elevation_m, description)
-VALUES (1203, 1002, 'B03', '台站 B 阵元 3', 116.1000000, 40.1005000, 60.000, '虚构坐标，采集参数待实机确认。');
+VALUES (1203, 1002, 'B03', '台站 B 传感器 3', 116.1000000, 40.1005000, 60.000, '虚构坐标，采集参数待实机确认。');
 
 INSERT INTO source_event
     (id, code, name, origin_time, longitude, latitude, source_kind, description)

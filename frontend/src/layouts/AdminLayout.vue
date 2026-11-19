@@ -1,34 +1,45 @@
 <script setup lang="ts">
-import { Grid, Connection } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { Location } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { ElMessage } from 'element-plus'
+import { getErrorMessage } from '@/api/http'
 
 const route = useRoute()
+const router = useRouter(),
+  auth = useAuthStore()
+async function logout() {
+  try {
+    if (await auth.logout()) await router.replace('/login')
+  } catch (cause) {
+    ElMessage.error(getErrorMessage(cause))
+  }
+}
 </script>
 
 <template>
   <div class="app-shell">
     <aside class="sidebar">
-      <RouterLink to="/overview" class="brand" aria-label="WaveHub 首页">
+      <RouterLink to="/stations" class="brand" aria-label="WaveHub 首页">
         <span class="brand-mark">W</span>
-        <span>WaveHub<small>业务管理平台</small></span>
+        <span>WaveHub</span>
       </RouterLink>
-      <div class="nav-label">工作空间</div>
       <el-menu :default-active="route.path" router class="side-menu">
-        <el-menu-item index="/overview">
-          <el-icon><Grid /></el-icon><span>工作台</span>
+        <el-menu-item index="/stations" aria-label="台站管理">
+          <el-icon><Location /></el-icon><span>台站管理</span>
         </el-menu-item>
       </el-menu>
-      <div class="sidebar-footer">
-        <el-icon><Connection /></el-icon> 基础框架 · v0.1.0
-      </div>
     </aside>
     <div class="main-shell">
       <header class="topbar">
-        <span>工作空间 <span class="breadcrumb-separator">/</span> {{ route.meta.title }}</span>
-        <el-tag type="info" effect="plain" round>开发工作台</el-tag>
+        <span>{{ route.meta.title }}</span>
+        <div class="account-menu">
+          <span>{{ auth.username }}</span><el-button text :loading="auth.loggingOut" @click="logout"
+            >退出</el-button
+          >
+        </div>
       </header>
       <main class="page-content"><RouterView /></main>
-      <footer class="page-footer">WaveHub · 让业务协作更有条理</footer>
     </div>
   </div>
 </template>
